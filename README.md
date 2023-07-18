@@ -49,6 +49,6 @@ If you find the code useful for your research, please cite our paper:
 }
 ```
 
-##Acknowledgements
+## Acknowledgements
 
 We would like to thank the researchers of [Stable Diffusion](https://github.com/CompVis/stable-diffusion), [GANwriting](https://github.com/omni-us/research-GANwriting/tree/9e0d8a3a8327f00c67029dbf4a2fc1b0a88f730d), [SmartPatch](https://github.com/MattAlexMiracle/SmartPatch), and [HTR best practices](https://github.com/georgeretsi/HTR-best-practices/tree/main) for releasing their code.
