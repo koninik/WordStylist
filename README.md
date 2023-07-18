@@ -21,11 +21,12 @@
 ## Dataset & Pre-processing
 
 Download the ```data/words.tgz``` of IAM Handwriting Database: https://fki.tic.heia-fr.ch/databases/iam-handwriting-database.
+
 Then, pre-process the word images by running:
 ```
 python prepare_images.py
 ```
-Before running the ```prepare_images.py``` code make sure you have change the ```iam_path``` and ```save_dir``` to the corresponding ```data/words.tgz``` and the path to save the processed images.
+Before running the ```prepare_images.py``` code make sure you have changed the ```iam_path``` and ```save_dir``` to the corresponding ```data/words.tgz``` and the path to save the processed images.
 
 ## Training
 
