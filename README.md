@@ -11,7 +11,7 @@
 
  
  <p align="center">
-<img src=figs/wordstylist.png width="500"/>
+<img src=figs/wordstylist.png width="700"/>
 </p>
 
 > **Abstract:** 
