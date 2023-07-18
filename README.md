@@ -36,3 +36,15 @@ python train.py --iam_path path/to/processed/images --save_path path/to/save/mod
 ```
 
 ## Sampling - Regenerating IAM
+
+## Citation
+
+If you find the code useful for your research, please cite our paper:
+```
+@article{nikolaidou2023wordstylist,
+  title={{WordStylist: Styled Verbatim Handwritten Text Generation with Latent Diffusion Models}},
+  author={Nikolaidou, Konstantina and Retsinas, George and Christlein, Vincent and Seuret, Mathias and Sfikas, Giorgos and Smith, Elisa Barney and Mokayed, Hamam and Liwicki, Marcus},
+  journal={arXiv preprint arXiv:2303.16576},
+  year={2023}
+}
+```
