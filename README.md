@@ -5,13 +5,13 @@
   -->
  <p align='center'>
   <b>
-    <a href="https://arxiv.org/pdf/2303.16576.pdf">ArXiv</a>
+    <a href="https://arxiv.org/pdf/2303.16576.pdf">ArXiv Paper</a>
   </b>
 </p> 
 
  
  <p align="center">
-<img src=figs/wordstylist.png width="650"/>
+<img src=figs/wordstylist.png width="600"/>
 </p>
 
 > **Abstract:** 
