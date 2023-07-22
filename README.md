@@ -37,7 +37,7 @@ python train.py --iam_path path/to/processed/images --save_path path/to/save/mod
 
 ## Trained Model
 
-We provide the weights of a trained model, which you can download from: [models](https://drive.google.com/drive/folders/1hroHA6J0zvavVxbUFpAT_5z-hcsAnuaC?usp=share_link).
+We provide the weights of a trained model, which you can download from: [trained_model](https://drive.google.com/file/d/1XVRUXSJw0PaNgrtFH_mNHceFO-Ouf_xz/view?usp=share_link).
 
 ## Sampling - Regenerating IAM
 
