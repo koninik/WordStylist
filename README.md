@@ -41,6 +41,18 @@ We provide the weights of a trained model, which you can download from: [trained
 
 ## Sampling - Regenerating IAM
 
+If you want to regenerate the full IAM training set you can run:
+```
+python full_sampling.py --save_path path/to/save/generated/images --models_path /path/to/trained/models
+```
+
+## Sampling - Single image
+
+If you want to generate a single word with a random style you can run:
+```
+python sampling.py --save_path path/to/save/generated/images --models_path /path/to/trained/models --words ['hello']
+```
+
 ## Citation
 
 If you find the code useful for your research, please cite our paper:
