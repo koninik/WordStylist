@@ -851,9 +851,6 @@ class UNetModel(nn.Module):
         
         self.word_emb = CharacterEncoder(vocab_size, context_dim, max_seq_len).to(args.device)
         
-        if self.num_classes is not None:
-            self.label_emb = nn.Embedding(num_classes, time_embed_dim)
-
         #==================== INPUT BLOCK ====================
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
