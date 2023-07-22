@@ -28,12 +28,16 @@ python prepare_images.py
 ```
 Before running the ```prepare_images.py``` code make sure you have changed the ```iam_path``` and ```save_dir``` to the corresponding ```data/words.tgz``` and the path to save the processed images.
 
-## Training
+## Training from scratch
 
 To train the diffusion model run:
 ```
 python train.py --iam_path path/to/processed/images --save_path path/to/save/models/and/results
 ```
+
+## Trained Model
+
+We provide the weights of a trained model, which you can download from: [models](https://drive.google.com/drive/folders/1hroHA6J0zvavVxbUFpAT_5z-hcsAnuaC?usp=share_link).
 
 ## Sampling - Regenerating IAM
 
