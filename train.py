@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import cv2
+import configparser
 from torch.utils.data import DataLoader, Dataset
 import torchvision
 from tqdm import tqdm
@@ -13,6 +14,41 @@ import json
 from diffusers import AutoencoderKL
 from unet import UNetModel
 import wandb
+
+
+def create_release(release_folder, size, style_ids, output_max_len, c_classes, letter2index, tokens, vocab_size, stable_diffusion_path):
+
+    height, width = size
+
+    result_ini = configparser.ConfigParser()
+    result_ini.optionxform = lambda option: option
+
+    result_ini["style"] = {}
+    for style_id in style_ids:
+            key = "style_id_" + str(style_id)
+            result_ini["style"][key] = str(style_id)
+
+    result_ini["model"] = {}
+    result_ini["model"]["width"] = str(width)
+    result_ini["model"]["height"] = str(height)
+
+    result_ini["model"]["output_max_len"] = str(output_max_len)
+    result_ini["model"]["c_classes"] = c_classes
+    result_ini["model"]["vocab_size"] = str(vocab_size)
+
+    result_ini["tokens"] = {}
+    for key in tokens:
+        result_ini["tokens"][key] = str(tokens[key])
+
+    result_ini["letter2index"] = {}
+    for key in letter2index:
+        result_ini["letter2index"][key] = str(letter2index[key])
+
+    result_ini["stable_diffusion"] = {}
+    result_ini["stable_diffusion"]["stable_diffusion_path"] = stable_diffusion_path
+
+    with open(release_folder + os.sep + "model.ini", 'w') as configfile:
+        result_ini.write(configfile)
 
 
 ### Borrowed from GANwriting ###
@@ -32,19 +68,19 @@ def label_padding(labels, letter2index, tokens, output_max_len):
 
 
 class IAMDataset(Dataset):
-    def __init__(self, full_dict, image_path, writer_dict, args, transforms=None):
+    def __init__(self, full_dict, image_path, writer_dict, output_max_len, tokens, letter2index, transforms=None):
 
         self.data_dict = full_dict
         self.image_path = image_path
         self.writer_dict = writer_dict
     
         self.transforms = transforms
-        self.output_max_len = args.output_max_len
+        self.output_max_len = output_max_len
         self.n_samples_per_class = 16
         self.indices = list(full_dict.keys())
 
-        self.letter2index = args.letter2index
-        self.tokens = args.tokens
+        self.letter2index = letter2index
+        self.tokens = tokens
             
     def __len__(self):
         return len(self.indices)
@@ -101,21 +137,21 @@ class EMA:
 
 
 class Diffusion:
-    def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=(64, 128), args=None):
+    def __init__(self, output_max_len, tokens, letter2index, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=(64, 128), device="cuda:0"):
         self.noise_steps = noise_steps
         self.beta_start = beta_start
         self.beta_end = beta_end
 
-        self.beta = self.prepare_noise_schedule().to(args.device)
+        self.beta = self.prepare_noise_schedule().to(device)
         self.alpha = 1. - self.beta
         self.alpha_hat = torch.cumprod(self.alpha, dim=0)
 
         self.img_size = img_size
-        self.device = args.device
-        self.output_max_len = args.output_max_len
+        self.device = device
+        self.output_max_len = output_max_len
 
-        self.letter2index = args.letter2index
-        self.tokens = args.tokens
+        self.letter2index = letter2index
+        self.tokens = tokens
 
     def prepare_noise_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
@@ -183,7 +219,7 @@ class Diffusion:
         return x
 
 
-def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, num_classes, vocab_size, transforms, args):
+def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, num_classes, vocab_size, transforms, args, save_folder):
     model.train()
     
     print('Training started....')
@@ -226,9 +262,9 @@ def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, nu
             loss_min = loss_mean
             patience = 0
 
-            torch.save(model.state_dict(), args.save_path + os.sep + "models" + os.sep + "unet_ckpt.pt")
-            torch.save(ema_model.state_dict(), args.save_path + os.sep + "models" + os.sep + "ema_ckpt.pt")
-            torch.save(optimizer.state_dict(), args.save_path + os.sep + "models" + os.sep + "unet_optim.pt")
+            torch.save(model.state_dict(), save_folder + os.sep + "unet_ckpt.pt")
+            torch.save(ema_model.state_dict(), save_folder + os.sep + "ema_ckpt.pt")
+            torch.save(optimizer.state_dict(), save_folder + os.sep + "unet_optim.pt")
         else:
             patience += 1
             print(f"----------> current loss: {loss_mean}, minimum loss: {loss_min}, remaining patience: {args.patience - patience}")
@@ -244,12 +280,13 @@ def main():
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--patience', type=int, default=100)
-    parser.add_argument('--img_size', type=int, default=(256, 256))
+    parser.add_argument('--img_height', type=int, default=256)
+    parser.add_argument('--img_width', type=int, default=256)
     parser.add_argument('--iam_path', type=str, help='path to images')
     parser.add_argument('--gt_train', type=str, help='annotations')
     # string parameters
     parser.add_argument('--c_classes', default="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
-    parser.add_argument('--output_max_len', type=int, default=15, help="max length of output #+ 2  # <GO>+groundtruth+<END>")
+    parser.add_argument('--output_max_len', type=int, default=16, help="max length of output #+ 2  # <GO>+groundtruth+<END>")
     # UNET parameters
     parser.add_argument('--save_path', help=" output folder of the result")
     parser.add_argument('--device', type=str, default='cuda:0') 
@@ -257,12 +294,15 @@ def main():
     parser.add_argument('--interpolation', action="store_true")
     parser.add_argument('--stable_diffusion_path', default='./stable-diffusion-v1-5', help='path to stable diffusion')
     args = parser.parse_args()
-    
-    #create save directories
-    os.makedirs(args.save_path + os.sep + "models", exist_ok=True)
+
+    save_folder = args.save_path + os.sep + "models"
+    os.makedirs(save_folder, exist_ok=True)
+
+    img_size = (args.img_height, args.img_width)
 
     # vocabulary
     c_classes = args.c_classes
+    output_max_len = args.output_max_len
     letter2index = {label: n for n, label in enumerate(c_classes)}
 
     tok = False
@@ -277,10 +317,6 @@ def main():
     print('num of character classes', num_classes)
     vocab_size = num_classes + num_tokens
     print('character vocabulary size', vocab_size)
-    # for passing arguments
-    args.letter2index = letter2index
-    args.tokens = tokens
-
 
     transforms = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
@@ -295,7 +331,6 @@ def main():
         writer_idx = 0
         for idx, annotation in enumerate(annotations):
             style_id, filename = annotation[0].split(",")
-            filename = filename + ".png"
             text = annotation[1]
             full_dict[idx] = {"image": filename, "s_id": style_id, "label": text}
             if style_id not in writer_dict.keys():
@@ -303,17 +338,17 @@ def main():
                 writer_idx += 1
 
         print("number of train writer styles", len(writer_dict))
-        style_classes = len(writer_dict)
+        num_styles = len(writer_dict)
 
-    train_ds = IAMDataset(full_dict, args.iam_path, writer_dict, args, transforms=transforms)
+    train_ds = IAMDataset(full_dict, args.iam_path, writer_dict, output_max_len, tokens, letter2index, transforms=transforms)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    
-    unet = UNetModel(image_size=args.img_size, in_channels=4, model_channels=320, out_channels=4, num_res_blocks=1, attention_resolutions=(1, 1), channel_mult=(1, 1), num_heads=4, num_classes=style_classes, context_dim=320, vocab_size=vocab_size, args=args, max_seq_len=args.output_max_len).to(args.device)
+
+    unet = UNetModel(image_size=img_size, in_channels=4, model_channels=320, out_channels=4, num_res_blocks=1, attention_resolutions=(1, 1), channel_mult=(1, 1), num_heads=4, num_classes=num_styles, context_dim=320, vocab_size=vocab_size, args=args, max_seq_len=output_max_len).to(args.device)
     
     optimizer = optim.AdamW(unet.parameters(), lr=0.0001)
 
     mse_loss = nn.MSELoss()
-    diffusion = Diffusion(img_size=args.img_size, args=args)
+    diffusion = Diffusion(output_max_len=output_max_len, tokens=tokens, letter2index=letter2index, img_size=img_size)
     
     ema = EMA(0.995)
     ema_model = copy.deepcopy(unet).eval().requires_grad_(False)
@@ -329,8 +364,9 @@ def main():
         print('Latent is false - Working on pixel space')
         vae = None
 
-    train(diffusion, unet, ema, ema_model, vae, optimizer, mse_loss, train_loader, style_classes, vocab_size, transforms, args)
-
+    train(diffusion, unet, ema, ema_model, vae, optimizer, mse_loss, train_loader, num_styles, vocab_size, transforms, args, save_folder)
+    # release
+    create_release(save_folder, img_size, writer_dict.keys(), output_max_len, c_classes, letter2index, tokens, vocab_size, os.path.abspath(args.stable_diffusion_path))
 
 if __name__ == "__main__":
     main()
