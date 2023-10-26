@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import numpy as np
-from PIL import Image
+import cv2
 from torch.utils.data import DataLoader, Dataset
 import torchvision
 from tqdm import tqdm
@@ -14,71 +14,22 @@ from diffusers import AutoencoderKL
 from unet import UNetModel
 import wandb
 
-MAX_CHARS = 10
-OUTPUT_MAX_LEN = MAX_CHARS #+ 2  # <GO>+groundtruth+<END>
-c_classes = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-cdict = {c:i for i,c in enumerate(c_classes)}
-icdict = {i:c for i,c in enumerate(c_classes)}
-
-
-def setup_logging(args):
-    os.makedirs(args.save_path, exist_ok=True)
-    os.makedirs(os.path.join(args.save_path, 'models'), exist_ok=True)
-    os.makedirs(os.path.join(args.save_path, 'images'), exist_ok=True)
 
 ### Borrowed from GANwriting ###
-def label_padding(labels, num_tokens):
+def label_padding(labels, letter2index, tokens, output_max_len):
+
+    num_tokens = len(tokens.keys())
     new_label_len = []
     ll = [letter2index[i] for i in labels]
     new_label_len.append(len(ll) + 2)
     ll = np.array(ll) + num_tokens
     ll = list(ll)
     #ll = [tokens["GO_TOKEN"]] + ll + [tokens["END_TOKEN"]]
-    num = OUTPUT_MAX_LEN - len(ll)
+    num = output_max_len - len(ll)
     if not num == 0:
         ll.extend([tokens["PAD_TOKEN"]] * num)  # replace PAD_TOKEN
     return ll
 
-
-def labelDictionary():
-    labels = list(c_classes)
-    letter2index = {label: n for n, label in enumerate(labels)}
-    # create json object from dictionary if you want to save writer ids
-    json_dict_l = json.dumps(letter2index)
-    l = open("letter2index.json","w")
-    l.write(json_dict_l)
-    l.close()
-    index2letter = {v: k for k, v in letter2index.items()}
-    json_dict_i = json.dumps(index2letter)
-    l = open("index2letter.json","w")
-    l.write(json_dict_i)
-    l.close()
-    return len(labels), letter2index, index2letter
-
-
-char_classes, letter2index, index2letter = labelDictionary()
-tok = False
-if not tok:
-    tokens = {"PAD_TOKEN": 52}
-else:
-    tokens = {"GO_TOKEN": 52, "END_TOKEN": 53, "PAD_TOKEN": 54}
-num_tokens = len(tokens.keys())
-print('num_tokens', num_tokens)
-
-
-print('num of character classes', char_classes)
-vocab_size = char_classes + num_tokens
-
-
-def save_images(images, path, args, **kwargs):
-    grid = torchvision.utils.make_grid(images, **kwargs)
-    if args.latent == True:
-        im = torchvision.transforms.ToPILImage()(grid)
-    else:
-        ndarr = grid.permute(1, 2, 0).to('cpu').numpy()
-        im = Image.fromarray(ndarr)
-    im.save(path)
-    return im
 
 class IAMDataset(Dataset):
     def __init__(self, full_dict, image_path, writer_dict, args, transforms=None):
@@ -88,17 +39,16 @@ class IAMDataset(Dataset):
         self.writer_dict = writer_dict
     
         self.transforms = transforms
-        self.output_max_len = OUTPUT_MAX_LEN
-        self.max_len = MAX_CHARS
+        self.output_max_len = args.output_max_len
         self.n_samples_per_class = 16
         self.indices = list(full_dict.keys())
-        
+
+        self.letter2index = args.letter2index
+        self.tokens = args.tokens
             
     def __len__(self):
         return len(self.indices)
-            
 
-    
     def __getitem__(self, idx):
         image_name = self.data_dict[self.indices[idx]]['image']
         label = self.data_dict[self.indices[idx]]['label']
@@ -106,15 +56,15 @@ class IAMDataset(Dataset):
         wr_id = torch.tensor(self.writer_dict[wr_id]).to(torch.int64)
         img_path = os.path.join(self.image_path, image_name)
         
-        image = Image.open(img_path).convert('RGB')
+        image = cv2.imread(img_path)[..., ::-1]  # BGR->RGB
+        image = np.ascontiguousarray(image)
         image = self.transforms(image)
         
-        word_embedding = label_padding(label, num_tokens) 
+        word_embedding = label_padding(label, self.letter2index, self.tokens, self.output_max_len)
         word_embedding = np.array(word_embedding, dtype="int64")
         word_embedding = torch.from_numpy(word_embedding).long()    
         
         return image, word_embedding, wr_id
-
 
 
 class EMA:
@@ -150,7 +100,6 @@ class EMA:
         ema_model.load_state_dict(model.state_dict())
 
 
-
 class Diffusion:
     def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=(64, 128), args=None):
         self.noise_steps = noise_steps
@@ -163,6 +112,10 @@ class Diffusion:
 
         self.img_size = img_size
         self.device = args.device
+        self.output_max_len = args.output_max_len
+
+        self.letter2index = args.letter2index
+        self.tokens = args.tokens
 
     def prepare_noise_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
@@ -176,7 +129,6 @@ class Diffusion:
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.noise_steps, size=(n,))
 
-
     def sampling(self, model, vae, n, x_text, labels, args, mix_rate=None, cfg_scale=3):
         model.eval()
         tensor_list = []
@@ -186,14 +138,14 @@ class Diffusion:
             
             words = [x_text]*n
             for word in words:
-                transcript = label_padding(word, num_tokens) #self.transform_text(transcript)
+                transcript = label_padding(word, self.letter2index, self.tokens, self.output_max_len) #self.transform_text(transcript)
                 word_embedding = np.array(transcript, dtype="int64")
                 word_embedding = torch.from_numpy(word_embedding).long()#float()
                 tensor_list.append(word_embedding)
             text_features = torch.stack(tensor_list)
             text_features = text_features.to(args.device)
             
-            if args.latent == True:
+            if args.latent:
                 x = torch.randn((n, 4, self.img_size[0] // 8, self.img_size[1] // 8)).to(args.device)
             else:
                 x = torch.randn((n, 3, self.img_size[0], self.img_size[1])).to(args.device)
@@ -216,7 +168,7 @@ class Diffusion:
                 x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
                 
         model.train()
-        if args.latent==True:
+        if args.latent:
             latents = 1 / 0.18215 * x
             image = vae.decode(latents).sample
 
@@ -230,14 +182,18 @@ class Diffusion:
             x = (x * 255).type(torch.uint8)
         return x
 
+
 def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, num_classes, vocab_size, transforms, args):
     model.train()
     
     print('Training started....')
+    patience = 0
+    loss_min = np.inf
     for epoch in range(args.epochs):
         print('Epoch:', epoch)
         pbar = tqdm(loader)
-        
+
+        losses = []
         for i, (images, word, s_id) in enumerate(pbar):
             images = images.to(args.device)
             original_images = images
@@ -264,111 +220,95 @@ def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, nu
             optimizer.step()
             ema.step_ema(ema_model, model)
             pbar.set_postfix(MSE=loss.item())
-            
-    
-        if epoch % 100 == 0:
-            # if args.img_feat is True:
-            #     n=16
-            #     labels = image_features
-            # else:
-            labels = torch.arange(16).long().to(args.device)
-            n=len(labels)
-        
-            
-            words = ['text', 'getting', 'prop']
-            for x_text in words: 
-                ema_sampled_images = diffusion.sampling(ema_model, vae, n=n, x_text=x_text, labels=labels, args=args)
-                sampled_ema = save_images(ema_sampled_images, os.path.join(args.save_path, 'images', f"{x_text}_{epoch}.jpg"), args)
-                if args.wandb_log==True:
-                    wandb_sampled_ema= wandb.Image(sampled_ema, caption=f"{x_text}_{epoch}")
-                    wandb.log({f"Sampled images": wandb_sampled_ema})
-            torch.save(model.state_dict(), os.path.join(args.save_path,"models", "ckpt.pt"))
-            torch.save(ema_model.state_dict(), os.path.join(args.save_path,"models", "ema_ckpt.pt"))
-            torch.save(optimizer.state_dict(), os.path.join(args.save_path,"models", "optim.pt"))   
+            losses.append(loss.item())
+        loss_mean = np.mean(losses)
+        if loss_mean < loss_min:
+            loss_min = loss_mean
+            patience = 0
+
+            torch.save(model.state_dict(), args.save_path + os.sep + "models" + os.sep + "unet_ckpt.pt")
+            torch.save(ema_model.state_dict(), args.save_path + os.sep + "models" + os.sep + "ema_ckpt.pt")
+            torch.save(optimizer.state_dict(), args.save_path + os.sep + "models" + os.sep + "unet_optim.pt")
+        else:
+            patience += 1
+            print(f"----------> current loss: {loss_mean}, minimum loss: {loss_min}, remaining patience: {args.patience - patience}")
+            if patience >= args.patience:
+                print("Stop training...")
+                break
 
 
 def main():
     '''Main function'''
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--batch_size', type=int, default=224)
-    parser.add_argument('--num_workers', type=int, default=4) 
-    parser.add_argument('--img_size', type=int, default=(64, 256))  
-    parser.add_argument('--dataset', type=str, default='iam', help='iam or other dataset') 
-    parser.add_argument('--iam_path', type=str, default='/path/to/iam/images/', help='path to iam dataset (images 64x256)')
-    parser.add_argument('--gt_train', type=str, default='./gt/gan.iam.tr_va.gt.filter27')
-    #UNET parameters
-    parser.add_argument('--channels', type=int, default=4, help='if latent is True channels should be 4, else 3')  
-    parser.add_argument('--emb_dim', type=int, default=320)
-    parser.add_argument('--num_heads', type=int, default=4)
-    parser.add_argument('--num_res_blocks', type=int, default=1)
-    parser.add_argument('--save_path', type=str, default='./save_path/')
+    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--patience', type=int, default=100)
+    parser.add_argument('--img_size', type=int, default=(256, 256))
+    parser.add_argument('--iam_path', type=str, help='path to images')
+    parser.add_argument('--gt_train', type=str, help='annotations')
+    # string parameters
+    parser.add_argument('--c_classes', default="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+    parser.add_argument('--output_max_len', type=int, default=15, help="max length of output #+ 2  # <GO>+groundtruth+<END>")
+    # UNET parameters
+    parser.add_argument('--save_path', help=" output folder of the result")
     parser.add_argument('--device', type=str, default='cuda:0') 
-    parser.add_argument('--wandb_log', type=bool, default=False)
-    parser.add_argument('--latent', type=bool, default=True)
-    parser.add_argument('--img_feat', type=bool, default=True)
-    parser.add_argument('--interpolation', type=bool, default=False)
-    parser.add_argument('--writer_dict', type=str, default='./writers_dict.json')
-    parser.add_argument('--stable_dif_path', type=str, default='./stable-diffusion-v1-5', help='path to stable diffusion')
-    
-    
+    parser.add_argument('--latent', action="store_false")
+    parser.add_argument('--interpolation', action="store_true")
+    parser.add_argument('--stable_diffusion_path', default='./stable-diffusion-v1-5', help='path to stable diffusion')
     args = parser.parse_args()
-    if args.wandb_log==True:
-        runs = wandb.init(project='DIFFUSION_IAM', name=f'{args.save_path}', config=args)
-
-        wandb.config.update(args)
     
     #create save directories
-    setup_logging(args)
+    os.makedirs(args.save_path + os.sep + "models", exist_ok=True)
 
+    # vocabulary
+    c_classes = args.c_classes
+    letter2index = {label: n for n, label in enumerate(c_classes)}
+
+    tok = False
+    if not tok:
+        tokens = {"PAD_TOKEN": len(c_classes)}
+    else:
+        tokens = {"GO_TOKEN": len(c_classes), "END_TOKEN": len(c_classes) + 1, "PAD_TOKEN": len(c_classes) + 2}
+    num_tokens = len(tokens.keys())
+    print('num_tokens', num_tokens)
+
+    num_classes = len(c_classes)
+    print('num of character classes', num_classes)
+    vocab_size = num_classes + num_tokens
     print('character vocabulary size', vocab_size)
-    
-    if args.dataset == 'iam':
-        class_dict = {}
-        for i, j in enumerate(os.listdir(f'{args.iam_path}')):
-            class_dict[j] = i
+    # for passing arguments
+    args.letter2index = letter2index
+    args.tokens = tokens
 
-        transforms = torchvision.transforms.Compose([
-                        torchvision.transforms.ToTensor(),
-                        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                            ])
 
-        with open(args.gt_train, 'r') as f:
-            train_data = f.readlines()
-            train_data = [i.strip().split(' ') for i in train_data]
-            wr_dict = {}
-            full_dict = {}
-            image_wr_dict = {}
-            img_word_dict = {}
-            wr_index = 0
-            idx = 0
-            for i in train_data:
-                s_id = i[0].split(',')[0]
-                image = i[0].split(',')[1] + '.png'
-                transcription = i[1]
-                #print(s_id)
-                full_dict[idx] = {'image': image, 's_id': s_id, 'label':transcription}
-                image_wr_dict[image] = s_id
-                img_word_dict[image] = transcription
-                idx += 1
-                if s_id not in wr_dict.keys():
-                    wr_dict[s_id] = wr_index
-                    wr_index += 1
-        
-            print('number of train writer styles', len(wr_dict))
-            style_classes=len(wr_dict)
-        
-        # create json object from dictionary if you want to save writer ids
-        json_dict = json.dumps(wr_dict)
-        f = open("writers_dict_train.json","w")
-        f.write(json_dict)
-        f.close()
-        
-        train_ds = IAMDataset(full_dict, args.iam_path, wr_dict, args, transforms=transforms)
-        
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    transforms = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+
+    with open(args.gt_train, "r") as f:
+        lines = f.readlines()
+        annotations = [line.strip().split(" ") for line in lines]
+        full_dict = {}
+        writer_dict = {}
+        writer_idx = 0
+        for idx, annotation in enumerate(annotations):
+            style_id, filename = annotation[0].split(",")
+            filename = filename + ".png"
+            text = annotation[1]
+            full_dict[idx] = {"image": filename, "s_id": style_id, "label": text}
+            if style_id not in writer_dict.keys():
+                writer_dict[style_id] = writer_idx
+                writer_idx += 1
+
+        print("number of train writer styles", len(writer_dict))
+        style_classes = len(writer_dict)
+
+    train_ds = IAMDataset(full_dict, args.iam_path, writer_dict, args, transforms=transforms)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     
-    unet = UNetModel(image_size = args.img_size, in_channels=args.channels, model_channels=args.emb_dim, out_channels=args.channels, num_res_blocks=args.num_res_blocks, attention_resolutions=(1,1), channel_mult=(1, 1), num_heads=args.num_heads, num_classes=style_classes, context_dim=args.emb_dim, vocab_size=vocab_size, args=args, max_seq_len=OUTPUT_MAX_LEN).to(args.device)    
+    unet = UNetModel(image_size=args.img_size, in_channels=4, model_channels=320, out_channels=4, num_res_blocks=1, attention_resolutions=(1, 1), channel_mult=(1, 1), num_heads=4, num_classes=style_classes, context_dim=320, vocab_size=vocab_size, args=args, max_seq_len=args.output_max_len).to(args.device)
     
     optimizer = optim.AdamW(unet.parameters(), lr=0.0001)
 
@@ -378,9 +318,9 @@ def main():
     ema = EMA(0.995)
     ema_model = copy.deepcopy(unet).eval().requires_grad_(False)
     
-    if args.latent==True:
+    if args.latent:
         print('Latent is true - Working on latent space')
-        vae = AutoencoderKL.from_pretrained(args.stable_dif_path, subfolder="vae")
+        vae = AutoencoderKL.from_pretrained(args.stable_diffusion_path, subfolder="vae")
         vae = vae.to(args.device)
         
         # Freeze vae and text_encoder
