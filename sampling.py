@@ -14,6 +14,16 @@ import numpy as np
 import configparser
 
 
+def crop_from_padding(img):
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_gray = (img_gray * 255).astype(np.uint8)
+    ret, thresholded = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    coords = cv2.findNonZero(thresholded)
+    x, y, w, h = cv2.boundingRect(coords)
+    crop = img[y: y + h, x: x + w, :]
+    return crop
+
+
 def main():
     '''Main function'''
     parser = argparse.ArgumentParser()
@@ -79,6 +89,7 @@ def main():
     diffusion = Diffusion(output_max_len=output_max_len, tokens=tokens, letter2index=letter2index, img_size=img_size)
     img = diffusion.sampling(ema_model, vae, n=len(style_id), x_text=text, labels=style_id, args=args)
     img = img.cpu().numpy()[0].transpose((1, 2, 0))  # CHW -> HWC
+    img = crop_from_padding(img)
     img = img[..., ::-1]  # RGB-> BGR
     cv2.imshow("generated", img)
     cv2.waitKey(0)
