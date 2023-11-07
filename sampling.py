@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import argparse
 import copy
+
+import tqdm
 from torch import optim
 from train import Diffusion, EMA
 from unet import UNetModel
@@ -16,10 +18,13 @@ import configparser
 
 def crop_from_padding(img):
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img_gray = (img_gray * 255).astype(np.uint8)
     ret, thresholded = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     coords = cv2.findNonZero(thresholded)
     x, y, w, h = cv2.boundingRect(coords)
+    if (h, w) == img_gray.shape[:2]:
+        thresholded = cv2.bitwise_not(thresholded)
+        coords = cv2.findNonZero(thresholded)
+        x, y, w, h = cv2.boundingRect(coords)
     crop = img[y: y + h, x: x + w, :]
     return crop
 
@@ -32,8 +37,8 @@ def main():
     parser.add_argument("--latent", action="store_false")
     parser.add_argument("--interpolation", action="store_true")
     parser.add_argument("--models_path", help="Folder of models")
-    parser.add_argument("--style_id", type=int, default=0, help="Index of style")
-    parser.add_argument("--text", help="Content for generated images")
+    parser.add_argument("--style_ids", nargs='+', help="List of style ids")
+    parser.add_argument("--texts", nargs='+', help="List of texts")
     args = parser.parse_args()
 
     unet_ckpt = args.models_path + os.sep + "unet_ckpt.pt"
@@ -55,9 +60,12 @@ def main():
     tokens = dict([(key, ini.getint("tokens", key)) for key in ini["tokens"]])
     letter2index = dict([(key, ini.getint("letter2index", key)) for key in ini["letter2index"]])
 
-    style_id = args.style_id
-    style_id = torch.tensor([style_id]).long().to(args.device)
-    text = args.text #produce, greater, music, queer, clearly, edifice, freedom, MOVE, life, sweet, several, months
+    save_path = args.save_path
+    assert not os.path.exists(save_path), f"{save_path} existed!"
+    os.makedirs(save_path)
+
+    style_ids = [int(float(style_id)) for style_id in args.style_ids]
+    texts = args.texts
 
     img_size = (img_height, img_width)
     if args.latent:
@@ -87,12 +95,18 @@ def main():
 
     # generate images
     diffusion = Diffusion(output_max_len=output_max_len, tokens=tokens, letter2index=letter2index, img_size=img_size)
-    img = diffusion.sampling(ema_model, vae, n=len(style_id), x_text=text, labels=style_id, args=args)
-    img = img.cpu().numpy()[0].transpose((1, 2, 0))  # CHW -> HWC
-    img = crop_from_padding(img)
-    img = img[..., ::-1]  # RGB-> BGR
-    cv2.imshow("generated", img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    for i, (style_id, text) in enumerate(tqdm.tqdm(zip(style_ids, texts))):
+        style_id = torch.tensor([style_id]).long().to(args.device)
+        img = diffusion.sampling(ema_model, vae, n=len(style_id), x_text=text, labels=style_id, args=args)
+        img = img.cpu().numpy()[0].transpose((1, 2, 0))  # CHW -> HWC
+        img = (img * 255).astype(np.uint8)
+        img = crop_from_padding(img)
+        img = img[..., ::-1]  # RGB-> BGR
+
+        # cv2.imshow("generated", img)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        cv2.imwrite(save_path + os.sep + text + f"_{i}.jpg", img)
+
 if __name__ == "__main__":
     main()
