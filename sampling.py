@@ -64,8 +64,7 @@ def main():
     assert not os.path.exists(save_path), f"{save_path} existed!"
     os.makedirs(save_path)
 
-    style_ids = [int(float(style_id)) for style_id in args.style_ids]
-    texts = args.texts
+    style_ids_texts = [(int(float(style_id)), text) for style_id, text in zip(args.style_ids, args.texts)]
 
     img_size = (img_height, img_width)
     if args.latent:
@@ -95,7 +94,7 @@ def main():
 
     # generate images
     diffusion = Diffusion(output_max_len=output_max_len, tokens=tokens, letter2index=letter2index, img_size=img_size)
-    for i, (style_id, text) in enumerate(tqdm.tqdm(zip(style_ids, texts))):
+    for i, (style_id, text) in enumerate(tqdm.tqdm(style_ids_texts)):
         img = diffusion.sampling(ema_model, vae, n=1, x_text=text, labels=torch.tensor([style_id]).long().to(args.device), args=args)
         img = img.cpu().numpy()[0].transpose((1, 2, 0))  # CHW -> HWC
         img = (img * 255).astype(np.uint8)
