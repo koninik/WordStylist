@@ -366,7 +366,7 @@ def main():
 
     train(diffusion, unet, ema, ema_model, vae, optimizer, mse_loss, train_loader, num_styles, vocab_size, transforms, args, save_folder)
     # release
-    create_release(save_folder, img_size, writer_dict.keys(), output_max_len, c_classes, letter2index, tokens, vocab_size, os.path.abspath(args.stable_diffusion_path))
+    create_release(save_folder, img_size, sorted(writer_dict.keys()), output_max_len, c_classes, letter2index, tokens, vocab_size, os.path.abspath(args.stable_diffusion_path))
 
 if __name__ == "__main__":
     main()
