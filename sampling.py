@@ -96,8 +96,7 @@ def main():
     # generate images
     diffusion = Diffusion(output_max_len=output_max_len, tokens=tokens, letter2index=letter2index, img_size=img_size)
     for i, (style_id, text) in enumerate(tqdm.tqdm(zip(style_ids, texts))):
-        style_id = torch.tensor([style_id]).long().to(args.device)
-        img = diffusion.sampling(ema_model, vae, n=len(style_id), x_text=text, labels=style_id, args=args)
+        img = diffusion.sampling(ema_model, vae, n=1, x_text=text, labels=torch.tensor([style_id]).long().to(args.device), args=args)
         img = img.cpu().numpy()[0].transpose((1, 2, 0))  # CHW -> HWC
         img = (img * 255).astype(np.uint8)
         img = crop_from_padding(img)
@@ -106,7 +105,7 @@ def main():
         # cv2.imshow("generated", img)
         # cv2.waitKey(0)
         # cv2.destroyAllWindows()
-        cv2.imwrite(save_path + os.sep + text + f"_{i}.jpg", img)
+        cv2.imwrite(save_path + os.sep + text + f"_{str(style_id)}_{i}.jpg", img)
 
 if __name__ == "__main__":
     main()
