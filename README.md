@@ -57,6 +57,17 @@ python sampling.py --save_path path/to/save/generated/images --models_path /path
 
 If you find the code useful for your research, please cite our paper:
 ```
+@inproceedings{nikolaidou2023wordstylist,
+  title={Wordstylist: styled verbatim handwritten text generation with latent diffusion models},
+  author={Nikolaidou, Konstantina and Retsinas, George and Christlein, Vincent and Seuret, Mathias and Sfikas, Giorgos and Smith, Elisa Barney and Mokayed, Hamam and Liwicki, Marcus},
+  booktitle={International Conference on Document Analysis and Recognition},
+  pages={384--401},
+  year={2023},
+  organization={Springer}
+}
+```
+
+```
 @article{nikolaidou2023wordstylist,
   title={{WordStylist: Styled Verbatim Handwritten Text Generation with Latent Diffusion Models}},
   author={Nikolaidou, Konstantina and Retsinas, George and Christlein, Vincent and Seuret, Mathias and Sfikas, Giorgos and Smith, Elisa Barney and Mokayed, Hamam and Liwicki, Marcus},
