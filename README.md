@@ -9,6 +9,15 @@
   </b>
 </p> 
 
+<!-- 
+[paper](https://link.springer.com/chapter/10.1007/978-3-031-41679-8_22) 
+  -->
+ <p align='center'>
+  <b>
+    <a href="https://link.springer.com/chapter/10.1007/978-3-031-41679-8_22">ICDAR Paper</a>
+  </b>
+</p> 
+
  
  <p align="center">
 <img src=figs/wordstylist.png width="600"/>
